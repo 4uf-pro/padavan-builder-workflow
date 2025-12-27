@@ -1,0 +1,132 @@
+name: Build firmware
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - '*'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: registry.gitlab.com/hadzhioglu/padavan-ng
+    defaults: { run: { shell: bash } }
+    
+    # Матричная сборка для 2 роутеров
+    strategy:
+      matrix:
+        config: ['RT-N11P', 'RT-N11PB1']
+        include:
+          - config: 'RT-N11P'
+            config_file: 'rt-n11p-fix.config'
+          - config: 'RT-N11PB1'
+            config_file: 'rt-n11pb1-fix.config'
+    
+    # Имя для отображения в интерфейсе
+    name: Build ${{ matrix.config }}
+    
+    steps:
+    - uses: actions/checkout@v4
+
+    # Шаг 1: Настройка конфига для текущей модели
+    - name: Setup config for ${{ matrix.config }}
+      run: |
+        echo "Using config file: ${{ matrix.config_file }}"
+        cp "${{ matrix.config_file }}" build.config
+
+    # Шаг 2: Получение переменных из файлов
+    - name: Get variables
+      run: |
+        sed -i 's|\r$||g' variables build.config
+        . <(cat variables build.config)
+        PADAVAN_THEMES="${PADAVAN_THEMES[*]}"
+        for v in "${!PADAVAN_@}" "${!CONFIG_@}"; do
+          echo "$v=${!v}" >> $GITHUB_ENV
+        done
+
+    # Шаг 3: Загрузка исходников и тулчейна
+    - name: Download sources and toolchain
+      run: |
+        git config --global --add safe.directory '*'
+        git clone -b "$PADAVAN_BRANCH" "$PADAVAN_REPO"
+        git -C padavan-ng checkout "$PADAVAN_COMMIT"
+        wget -qO- "$PADAVAN_TOOLCHAIN_URL" | tar -C padavan-ng --zstd -xf -
+
+    # Шаг 4: Установка тем (если указаны)
+    - name: Install themes
+      run: |
+        if [[ -n $PADAVAN_THEMES ]]; then
+          git clone --depth 1 -b "$PADAVAN_THEMES_BRANCH" "$PADAVAN_THEMES_REPO" themes
+          cp -r themes/common-theme themes/jquery.js padavan-ng/trunk/user/www/n56u_ribbon_fixed
+
+          for theme in $PADAVAN_THEMES; do
+            echo "Installing $theme theme"
+            cp -r "themes/$theme-theme" padavan-ng/trunk/user/www/n56u_ribbon_fixed
+          done
+        fi
+
+    # Шаг 5: Запуск пользовательского скрипта pre-build
+    - name: Run custom pre-build script
+      run: '[[ -f pre-build.sh ]] && . pre-build.sh || :'
+
+    # Шаг 6: Сборка прошивки (основной процесс)
+    - name: Build firmware
+      run: |
+        cp build.config padavan-ng/trunk/.config
+        cd padavan-ng/trunk
+        ./clear_tree.sh
+        ./build_firmware.sh
+
+        FW_FILE_NAME="$(find images -type f -regextype posix-extended -iregex ".*\.(trx|bin)$" \
+                        -printf "%T@\t%f\n" | sort -V | tail -1 | cut -f2)"
+        [[ -n $FW_FILE_NAME ]] || { echo "Firmware file not found"; exit 1; }
+        echo "FW_FILE_NAME=$FW_FILE_NAME" >> $GITHUB_ENV
+        
+        # Получаем версию прошивки и хэш коммита
+        PADAVAN_VERSION="$(grep '^#define VERSION' include/version.h | awk '{print $3}' | tr -d '\"')"
+        GIT_COMMIT="$(git rev-parse --short HEAD)"
+        echo "PADAVAN_VERSION=$PADAVAN_VERSION" >> $GITHUB_ENV
+        echo "GIT_COMMIT=$GIT_COMMIT" >> $GITHUB_ENV
+
+    # Шаг 7: Запуск пользовательского скрипта post-build
+    - name: Run custom post-build script
+      run: '[[ -f post-build.sh ]] && . post-build.sh || :'
+
+    # Шаг 8: Подготовка артефактов к загрузке
+    - name: Prepare artifacts
+      run: |
+        cp "padavan-ng/trunk/images/$FW_FILE_NAME" .
+        echo "BUILD_TIMESTAMP=$(date '+%Y.%m.%d_%H.%M.%S')" >> $GITHUB_ENV
+        
+        # Формируем имя файла по вашему шаблону
+        ARTIFACT_NAME="ASUS_${{ env.CONFIG_FIRMWARE_PRODUCT_ID }}_Padavan_${PADAVAN_VERSION}-${GIT_COMMIT}_${BUILD_TIMESTAMP}"
+        echo "ARTIFACT_NAME=$ARTIFACT_NAME" >> $GITHUB_ENV
+        
+        # Переименовываем файл прошивки
+        mv "$FW_FILE_NAME" "${ARTIFACT_NAME}.trx"
+
+    # Шаг 9: Загрузка артефактов на GitHub
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        # Формат: ASUS_RT-N11P_Padavan_3.4.3.9L-102-5d69a4459b_2025.12.27_12.12.52
+        name: ${{ env.ARTIFACT_NAME }}
+        retention-days: 7
+        path: |
+          ${{ env.ARTIFACT_NAME }}.trx
+          build.config
+
+    # Шаг 10: Проверка размера прошивки
+    - name: Check firmware size
+      run: |
+        partitions=padavan-ng/trunk/configs/boards/$CONFIG_VENDOR/$CONFIG_FIRMWARE_PRODUCT_ID/partitions.config
+        max_fw_size="$(awk '/Firmware/ { getline; getline; sub(",", ""); print strtonum($2); }' "$partitions")"
+        fw_size="$(stat -c %s "${{ env.ARTIFACT_NAME }}.trx")"
+
+        if ((fw_size > max_fw_size)); then
+          fw_size_fmtd="$(numfmt --grouping "$fw_size") bytes"
+          max_fw_size_fmtd="$(numfmt --grouping "$max_fw_size") bytes"
+          echo "Firmware size ($fw_size_fmtd) exceeds max size ($max_fw_size_fmtd) for your target device"
+          exit 1
+        fi
+        
