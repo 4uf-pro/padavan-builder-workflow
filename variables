@@ -1,0 +1,159 @@
+#!/bin/bash
+#
+# Padavan Build Configuration Variables
+# Customize these settings for your build environment
+#
+
+# ============================================
+# Repository Settings
+# ============================================
+
+# Padavan-NG source repository
+export PADAVAN_REPO="https://gitlab.com/hadzhioglu/padavan-ng.git"
+export PADAVAN_BRANCH="master"
+export PADAVAN_COMMIT="HEAD"
+
+# Toolchain URL (pre-built)
+export PADAVAN_TOOLCHAIN_URL="https://gitlab.com/api/v4/projects/hadzhioglu%2Fpadavan-ng/packages/generic/toolchain/latest/toolchain.tzst"
+
+# ============================================
+# UI Theme Configuration
+# ============================================
+
+# Theme repository (choose one)
+export PADAVAN_THEMES_REPO="https://gitlab.com/hadzhioglu/padavan-themes.git"
+# export PADAVAN_THEMES_REPO="https://gitlab.com/hadzhioglu/padavan-themes-lite.git"
+
+export PADAVAN_THEMES_BRANCH="main"
+
+# Available themes (uncomment to enable):
+# blue    - Blue theme
+# blue2   - Alternative blue theme
+# grey    - Grey theme
+# grey2   - Alternative grey theme
+# white   - White theme
+# yellow  - Yellow theme
+
+export PADAVAN_THEMES=(
+    # Uncomment themes you want to include:
+    # blue
+    # blue2
+    # grey
+    # grey2
+    # white
+    # yellow
+)
+
+# ============================================
+# Build Optimization
+# ============================================
+
+# Number of parallel jobs (auto-detect by default)
+export MAKE_JOBS="$(nproc)"
+
+# Build flags for optimization
+export CFLAGS="-Os -pipe -march=mips32r2 -mtune=24kec"
+export CXXFLAGS="$CFLAGS"
+export LDFLAGS="-Wl,--as-needed"
+
+# ============================================
+# Network Configuration (for build environment)
+# ============================================
+
+# Proxy settings (if needed)
+# export http_proxy="http://proxy.example.com:8080"
+# export https_proxy="http://proxy.example.com:8080"
+# export ftp_proxy="http://proxy.example.com:8080"
+# export no_proxy="localhost,127.0.0.1,.local"
+
+# ============================================
+# Advanced Settings
+# ============================================
+
+# Verbosity level (0=quiet, 1=normal, 2=verbose, 3=debug)
+export BUILD_VERBOSITY=1
+
+# Clean build environment before compiling
+export CLEAN_BUILD=1
+
+# Skip certain build stages (for development)
+# export SKIP_DOWNLOAD=0
+# export SKIP_PATCH=0
+# export SKIP_CONFIGURE=0
+# export SKIP_BUILD=0
+
+# ============================================
+# Quality Assurance
+# ============================================
+
+# Enable firmware hash verification
+export VERIFY_HASH=1
+
+# Minimum firmware size check (in bytes)
+export MIN_FIRMWARE_SIZE=2000000
+
+# Maximum firmware size (depends on device flash)
+export MAX_FIRMWARE_SIZE=4000000
+
+# ============================================
+# Output Configuration
+# ============================================
+
+# Output directory for built firmwares
+export OUTPUT_DIR="$(pwd)/output"
+
+# Keep temporary files for debugging (0=no, 1=yes)
+export KEEP_TEMP=0
+
+# ============================================
+# Version Information
+# ============================================
+
+# Custom version string (appears in web interface)
+export CUSTOM_VERSION="Custom Padavan $(date +%Y.%m.%d)"
+
+# Build signature (appears in filenames)
+export BUILD_SIGNATURE="$(date +%Y%m%d)-$(git rev-parse --short HEAD 2>/dev/null || echo 'custom')"
+
+# ============================================
+# Validation
+# ============================================
+
+# Validate required variables
+validate_variables() {
+    local errors=0
+    
+    if [[ -z "$PADAVAN_REPO" ]]; then
+        echo "❌ ERROR: PADAVAN_REPO is not set"
+        errors=$((errors + 1))
+    fi
+    
+    if [[ -z "$PADAVAN_TOOLCHAIN_URL" ]]; then
+        echo "❌ ERROR: PADAVAN_TOOLCHAIN_URL is not set"
+        errors=$((errors + 1))
+    fi
+    
+    if [[ $errors -gt 0 ]]; then
+        echo "❌ Configuration validation failed with $errors error(s)"
+        return 1
+    fi
+    
+    echo "✅ All required variables are properly set"
+    return 0
+}
+
+# Run validation (optional)
+# validate_variables || exit 1
+
+# ============================================
+# Documentation
+# ============================================
+
+# This file is sourced by the build script.
+# Modify variables according to your needs.
+#
+# For advanced customization, create a separate
+# file and source it after this one:
+# . custom_variables.sh
+
+echo "📋 Padavan build variables loaded successfully"
