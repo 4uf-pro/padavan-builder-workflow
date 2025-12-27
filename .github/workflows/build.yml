@@ -11,8 +11,25 @@ jobs:
     runs-on: ubuntu-latest
     container: registry.gitlab.com/hadzhioglu/padavan-ng
     defaults: { run: { shell: bash } }
+    
+    strategy:
+      matrix:
+        config: ['RT-N11P', 'RT-N11PB1']
+        include:
+          - config: 'RT-N11P'
+            config_file: 'rt-n11p.config'
+          - config: 'RT-N11PB1'
+            config_file: 'rt-n11pb1.config'
+    
+    name: Build ${{ matrix.config }}
+    
     steps:
     - uses: actions/checkout@v4
+
+    - name: Setup config for ${{ matrix.config }}
+      run: |
+        echo "Using config file: ${{ matrix.config_file }}"
+        cp "${{ matrix.config_file }}" build.config
 
     - name: Get variables
       run: |
@@ -68,7 +85,7 @@ jobs:
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: padavan-ng_${{ env.CONFIG_VENDOR }}_${{ env.CONFIG_FIRMWARE_PRODUCT_ID }}_${{ env.BUILD_TIMESTAMP }}
+        name: padavan_${{ env.CONFIG_VENDOR }}_${{ env.CONFIG_FIRMWARE_PRODUCT_ID }}_${{ env.BUILD_TIMESTAMP }}
         retention-days: 7
         path: |
           ${{ env.FW_FILE_NAME }}
