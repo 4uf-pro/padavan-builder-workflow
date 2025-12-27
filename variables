@@ -1,5 +1,0 @@
-# Версия тулчейна
-TOOLCHAIN_VERSION="latest"
-
-# Параметры сборки
-MAKE_FLAGS="-j$(nproc)"
