@@ -1,0 +1,25 @@
+#!/bin/bash
+# Конфигурационные параметры для сборки Padavan-NG
+
+# Параметры репозитория
+PADAVAN_REPO="https://gitlab.com/hadzhioglu/padavan-ng.git"
+PADAVAN_BRANCH="master"
+PADAVAN_COMMIT="HEAD"
+PADAVAN_TOOLCHAIN_URL="https://gitlab.com/api/v4/projects/hadzhioglu%2Fpadavan-ng/packages/generic/toolchain/latest/toolchain.tzst"
+
+# Параметры тем оформления (необязательные)
+PADAVAN_THEMES_REPO="https://gitlab.com/hadzhioglu/padavan-themes.git"
+# Альтернативный репозиторий облегчённых тем:
+# PADAVAN_THEMES_REPO="https://gitlab.com/hadzhioglu/padavan-themes-lite.git"
+PADAVAN_THEMES_BRANCH="main"
+
+# Для экономии места используется встроенная классическая тема Padavan
+# Раскомментируйте для подключения дополнительных тем:
+# PADAVAN_THEMES=(
+#   blue
+#   blue2
+#   grey
+#   grey2
+#   white
+#   yellow
+# )
