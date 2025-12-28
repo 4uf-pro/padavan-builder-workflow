@@ -1,0 +1,250 @@
+name: ASUS RT-N11P/RT-N11PB1 – Build Padavan Firmware
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - '*'
+
+jobs:
+  build-rt-n11p:
+    runs-on: ubuntu-latest
+    container: registry.gitlab.com/hadzhioglu/padavan-ng
+    defaults: { run: { shell: bash } }
+    
+    name: Build RT-N11P
+    
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Check config files exist
+      run: |
+        if [ ! -f "rt-n11p-fix.config" ]; then
+          echo "ERROR: Config file rt-n11p-fix.config not found!"
+          exit 1
+        fi
+
+    - name: Load environment variables
+      run: |
+        if [ ! -f variables ]; then
+          echo "ERROR: variables file not found!"
+          exit 1
+        fi
+        
+        sed -i 's|\r$||g' variables
+        . variables
+        
+        PADAVAN_THEMES="${PADAVAN_THEMES[*]}"
+        for v in "${!PADAVAN_@}"; do
+          echo "$v=${!v}" >> $GITHUB_ENV
+        done
+        
+        echo "DEVICE=RT-N11P" >> $GITHUB_ENV
+        echo "CONFIG_FILE=rt-n11p-fix.config" >> $GITHUB_ENV
+
+    - name: Download sources and toolchain
+      run: |
+        git config --global --add safe.directory '*'
+        git clone -b "$PADAVAN_BRANCH" "$PADAVAN_REPO"
+        git -C padavan-ng checkout "$PADAVAN_COMMIT"
+        wget -qO- "$PADAVAN_TOOLCHAIN_URL" | tar -C padavan-ng --zstd -xf -
+
+    - name: Install themes
+      run: |
+        if [[ -n $PADAVAN_THEMES ]]; then
+          git clone --depth 1 -b "$PADAVAN_THEMES_BRANCH" "$PADAVAN_THEMES_REPO" themes
+          cp -r themes/common-theme themes/jquery.js padavan-ng/trunk/user/www/n56u_ribbon_fixed
+
+          for theme in $PADAVAN_THEMES; do
+            echo "Installing theme: $theme"
+            cp -r "themes/$theme-theme" padavan-ng/trunk/user/www/n56u_ribbon_fixed
+          done
+        fi
+
+    - name: Run custom pre-build script
+      run: '[[ -f pre-build.sh ]] && . pre-build.sh || :'
+
+    - name: Load RT-N11P configuration
+      run: |
+        sed -i 's|\r$||g' rt-n11p-fix.config
+        . rt-n11p-fix.config
+        
+        for v in "${!CONFIG_@}"; do
+          echo "$v=${!v}" >> $GITHUB_ENV
+        done
+
+    - name: Build RT-N11P firmware
+      run: |
+        cp rt-n11p-fix.config padavan-ng/trunk/.config
+        
+        cd padavan-ng/trunk
+        ./clear_tree.sh
+        ./build_firmware.sh
+
+        FW_FILE_NAME="$(find images -type f -regextype posix-extended -iregex ".*\.(trx|bin)$" \
+                        -printf "%T@\t%f\n" | sort -V | tail -1 | cut -f2)"
+        [[ -n $FW_FILE_NAME ]] || { echo "Firmware file not found"; exit 1; }
+        
+        echo "FW_FILE_NAME=$FW_FILE_NAME" >> $GITHUB_ENV
+        echo "FW_BASENAME=${FW_FILE_NAME%.*}" >> $GITHUB_ENV
+
+    - name: Run custom post-build script
+      run: '[[ -f post-build.sh ]] && . post-build.sh || :'
+
+    - name: Create RT-N11P archive
+      run: |
+        # Prepare files in temporary directory
+        mkdir -p temp_artifact
+        cp "padavan-ng/trunk/images/$FW_FILE_NAME" "temp_artifact/"
+        cp rt-n11p-fix.config "temp_artifact/build.config"
+        
+        # Generate archive name
+        VENDOR_UPPER=$(echo "$CONFIG_VENDOR" | tr '[:lower:]' '[:upper:]')
+        TIMESTAMP=$(date '+%Y.%m.%d_%H.%M.%S')
+        
+        ZIP_NAME="${VENDOR_UPPER}_RT-N11P_Padavan_${FW_BASENAME}_${TIMESTAMP}.zip"
+        
+        # Create ZIP archive using Python
+        cd temp_artifact
+        python3 -c "import zipfile, sys; zf = zipfile.ZipFile('../$ZIP_NAME', 'w'); \
+                    zf.write('$FW_FILE_NAME'); zf.write('build.config'); zf.close()"
+        cd ..
+        
+        echo "ZIP_NAME=$ZIP_NAME" >> $GITHUB_ENV
+        echo "ARTIFACT_NAME=$ZIP_NAME" >> $GITHUB_ENV
+
+    - name: Upload RT-N11P artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ env.ZIP_NAME }}
+        retention-days: 7
+        path: ${{ env.ZIP_NAME }}
+
+  build-rt-n11pb1:
+    runs-on: ubuntu-latest
+    container: registry.gitlab.com/hadzhioglu/padavan-ng
+    defaults: { run: { shell: bash } }
+    
+    name: Build RT-N11PB1
+    
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Check config files exist
+      run: |
+        if [ ! -f "rt-n11pb1-fix.config" ]; then
+          echo "ERROR: Config file rt-n11pb1-fix.config not found!"
+          exit 1
+        fi
+
+    - name: Load environment variables
+      run: |
+        if [ ! -f variables ]; then
+          echo "ERROR: variables file not found!"
+          exit 1
+        fi
+        
+        sed -i 's|\r$||g' variables
+        . variables
+        
+        PADAVAN_THEMES="${PADAVAN_THEMES[*]}"
+        for v in "${!PADAVAN_@}"; do
+          echo "$v=${!v}" >> $GITHUB_ENV
+        done
+        
+        echo "DEVICE=RT-N11PB1" >> $GITHUB_ENV
+        echo "CONFIG_FILE=rt-n11pb1-fix.config" >> $GITHUB_ENV
+
+    - name: Download sources and toolchain
+      run: |
+        git config --global --add safe.directory '*'
+        git clone -b "$PADAVAN_BRANCH" "$PADAVAN_REPO"
+        git -C padavan-ng checkout "$PADAVAN_COMMIT"
+        wget -qO- "$PADAVAN_TOOLCHAIN_URL" | tar -C padavan-ng --zstd -xf -
+
+    - name: Install themes
+      run: |
+        if [[ -n $PADAVAN_THEMES ]]; then
+          git clone --depth 1 -b "$PADAVAN_THEMES_BRANCH" "$PADAVAN_THEMES_REPO" themes
+          cp -r themes/common-theme themes/jquery.js padavan-ng/trunk/user/www/n56u_ribbon_fixed
+
+          for theme in $PADAVAN_THEMES; do
+            echo "Installing theme: $theme"
+            cp -r "themes/$theme-theme" padavan-ng/trunk/user/www/n56u_ribbon_fixed
+          done
+        fi
+
+    - name: Run custom pre-build script
+      run: '[[ -f pre-build.sh ]] && . pre-build.sh || :'
+
+    - name: Load RT-N11PB1 configuration
+      run: |
+        sed -i 's|\r$||g' rt-n11pb1-fix.config
+        . rt-n11pb1-fix.config
+        
+        for v in "${!CONFIG_@}"; do
+          echo "$v=${!v}" >> $GITHUB_ENV
+        done
+
+    - name: Build RT-N11PB1 firmware
+      run: |
+        cp rt-n11pb1-fix.config padavan-ng/trunk/.config
+        
+        cd padavan-ng/trunk
+        ./clear_tree.sh
+        ./build_firmware.sh
+
+        FW_FILE_NAME="$(find images -type f -regextype posix-extended -iregex ".*\.(trx|bin)$" \
+                        -printf "%T@\t%f\n" | sort -V | tail -1 | cut -f2)"
+        [[ -n $FW_FILE_NAME ]] || { echo "Firmware file not found"; exit 1; }
+        
+        echo "FW_FILE_NAME=$FW_FILE_NAME" >> $GITHUB_ENV
+        echo "FW_BASENAME=${FW_FILE_NAME%.*}" >> $GITHUB_ENV
+
+    - name: Run custom post-build script
+      run: '[[ -f post-build.sh ]] && . post-build.sh || :'
+
+    - name: Create RT-N11PB1 archive
+      run: |
+        # Prepare files in temporary directory
+        mkdir -p temp_artifact
+        cp "padavan-ng/trunk/images/$FW_FILE_NAME" "temp_artifact/"
+        cp rt-n11pb1-fix.config "temp_artifact/build.config"
+        
+        # Generate archive name
+        VENDOR_UPPER=$(echo "$CONFIG_VENDOR" | tr '[:lower:]' '[:upper:]')
+        TIMESTAMP=$(date '+%Y.%m.%d_%H.%M.%S')
+        
+        ZIP_NAME="${VENDOR_UPPER}_RT-N11PB1_Padavan_${FW_BASENAME}_${TIMESTAMP}.zip"
+        
+        # Create ZIP archive using Python
+        cd temp_artifact
+        python3 -c "import zipfile, sys; zf = zipfile.ZipFile('../$ZIP_NAME', 'w'); \
+                    zf.write('$FW_FILE_NAME'); zf.write('build.config'); zf.close()"
+        cd ..
+        
+        echo "ZIP_NAME=$ZIP_NAME" >> $GITHUB_ENV
+        echo "ARTIFACT_NAME=$ZIP_NAME" >> $GITHUB_ENV
+
+    - name: Upload RT-N11PB1 artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ env.ZIP_NAME }}
+        retention-days: 7
+        path: ${{ env.ZIP_NAME }}
+
+  create-release:
+    runs-on: ubuntu-latest
+    needs: [build-rt-n11p, build-rt-n11pb1]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    
+    steps:
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+      
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          **/*.zip
+        generate_release_notes: true
