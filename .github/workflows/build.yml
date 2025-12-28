@@ -1,0 +1,292 @@
+name: Build Padavan Firmware
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - '*'
+
+env:
+  DEBIAN_FRONTEND: noninteractive
+  TZ: UTC
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: 
+      image: registry.gitlab.com/hadzhioglu/padavan-ng:latest
+      options: --user root --workdir /github/workspace
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 1
+
+    - name: Debug - List files
+      run: |
+        echo "=== Current directory structure ==="
+        ls -la
+        echo "=== Checking config files ==="
+        if [[ -f rt-n11p-fix.config ]]; then
+          echo "rt-n11p-fix.config found"
+          head -5 rt-n11p-fix.config
+        else
+          echo "ERROR: rt-n11p-fix.config not found!"
+        fi
+        if [[ -f rt-n11pb1-fix.config ]]; then
+          echo "rt-n11pb1-fix.config found"
+          head -5 rt-n11pb1-fix.config
+        else
+          echo "ERROR: rt-n11pb1-fix.config not found!"
+        fi
+        if [[ -f variables ]]; then
+          echo "variables found"
+          head -10 variables
+        else
+          echo "ERROR: variables not found!"
+        fi
+
+    - name: Load variables
+      run: |
+        echo "=== Loading variables ==="
+        if [[ -f variables ]]; then
+          # Convert Windows line endings to Unix
+          sed -i 's/\r$//' variables
+          # Load variables
+          source variables
+          
+          # Export variables to environment
+          echo "PADAVAN_REPO=${PADAVAN_REPO}" >> $GITHUB_ENV
+          echo "PADAVAN_BRANCH=${PADAVAN_BRANCH}" >> $GITHUB_ENV
+          echo "PADAVAN_COMMIT=${PADAVAN_COMMIT}" >> $GITHUB_ENV
+          echo "PADAVAN_TOOLCHAIN_URL=${PADAVAN_TOOLCHAIN_URL}" >> $GITHUB_ENV
+          echo "PADAVAN_THEMES_REPO=${PADAVAN_THEMES_REPO}" >> $GITHUB_ENV
+          echo "PADAVAN_THEMES_BRANCH=${PADAVAN_THEMES_BRANCH}" >> $GITHUB_ENV
+          
+          # Handle themes array
+          if [[ -n "${PADAVAN_THEMES[@]}" ]]; then
+            themes_str="${PADAVAN_THEMES[@]}"
+            echo "PADAVAN_THEMES_STR=${themes_str}" >> $GITHUB_ENV
+          fi
+          
+          echo "Variables loaded successfully"
+        else
+          echo "ERROR: variables file not found!"
+          exit 1
+        fi
+
+    - name: Download Padavan source
+      run: |
+        echo "=== Cloning Padavan repository ==="
+        echo "Repository: ${{ env.PADAVAN_REPO }}"
+        echo "Branch: ${{ env.PADAVAN_BRANCH }}"
+        
+        git clone --depth 1 --branch "${{ env.PADAVAN_BRANCH }}" "${{ env.PADAVAN_REPO }}" padavan-ng
+        if [[ $? -ne 0 ]]; then
+          echo "ERROR: Failed to clone repository"
+          exit 1
+        fi
+        
+        cd padavan-ng
+        if [[ "${{ env.PADAVAN_COMMIT }}" != "HEAD" ]]; then
+          git checkout "${{ env.PADAVAN_COMMIT }}"
+        fi
+        cd ..
+        
+        echo "Padavan source downloaded successfully"
+
+    - name: Download toolchain
+      run: |
+        echo "=== Downloading toolchain ==="
+        echo "URL: ${{ env.PADAVAN_TOOLCHAIN_URL }}"
+        
+        mkdir -p padavan-ng/toolchain
+        wget -qO- "${{ env.PADAVAN_TOOLCHAIN_URL }}" | tar -C padavan-ng --zstd -xf - || {
+          echo "ERROR: Failed to download/extract toolchain"
+          exit 1
+        }
+        
+        echo "Toolchain downloaded successfully"
+
+    - name: Install themes (optional)
+      if: env.PADAVAN_THEMES_STR != ''
+      run: |
+        echo "=== Installing themes ==="
+        git clone --depth 1 --branch "${{ env.PADAVAN_THEMES_BRANCH }}" "${{ env.PADAVAN_THEMES_REPO }}" themes
+        
+        # Copy common theme files
+        cp -r themes/common-theme padavan-ng/trunk/user/www/n56u_ribbon_fixed/
+        cp themes/jquery.js padavan-ng/trunk/user/www/n56u_ribbon_fixed/
+        
+        # Install selected themes
+        for theme in ${{ env.PADAVAN_THEMES_STR }}; do
+          echo "Installing theme: $theme"
+          cp -r "themes/${theme}-theme" padavan-ng/trunk/user/www/n56u_ribbon_fixed/
+        done
+        
+        echo "Themes installed successfully"
+
+    - name: Get firmware info
+      id: firmware_info
+      run: |
+        echo "=== Getting firmware information ==="
+        cd padavan-ng/trunk
+        
+        # Get version from version file or config
+        if [[ -f version ]]; then
+          FW_VERSION=$(grep 'FIRMWARE_BUILDS_REV=' version | cut -d'=' -f2)
+        else
+          FW_VERSION=$(grep 'CONFIG_FIRMWARE_VERSION=' .config 2>/dev/null | cut -d'=' -f2 | tr -d '"' || echo "unknown")
+        fi
+        
+        # Get git commit hash
+        FW_COMMIT=$(git rev-parse --short=9 HEAD 2>/dev/null || echo "unknown")
+        
+        echo "FW_VERSION=${FW_VERSION}" >> $GITHUB_ENV
+        echo "FW_COMMIT=${FW_COMMIT}" >> $GITHUB_ENV
+        echo "Timestamp: $(date '+%Y.%m.%d_%H.%M.%S')"
+        
+        echo "Firmware version: ${FW_VERSION}"
+        echo "Git commit: ${FW_COMMIT}"
+
+    - name: Build RT-N11P
+      id: build_rtn11p
+      run: |
+        echo "=== Building RT-N11P ==="
+        
+        # Check config file
+        if [[ ! -f rt-n11p-fix.config ]]; then
+          echo "ERROR: rt-n11p-fix.config not found!"
+          exit 1
+        fi
+        
+        # Copy config
+        cp rt-n11p-fix.config padavan-ng/trunk/.config
+        
+        # Build
+        cd padavan-ng/trunk
+        echo "Running clear_tree.sh..."
+        ./clear_tree.sh
+        
+        echo "Running build_firmware.sh..."
+        ./build_firmware.sh
+        
+        # Find firmware file
+        FW_FILE=$(find images -name "*.trx" -o -name "*.bin" | head -1)
+        if [[ -z "$FW_FILE" ]]; then
+          echo "ERROR: No firmware file found!"
+          ls -la images/ || echo "images directory not found"
+          exit 1
+        fi
+        
+        echo "Firmware found: $FW_FILE"
+        
+        # Copy and rename
+        TIMESTAMP=$(date '+%Y.%m.%d_%H.%M.%S')
+        NEW_NAME="ASUS_RT-N11P_Padavan_${FW_VERSION}-${FW_COMMIT}_${TIMESTAMP}.trx"
+        cp "$FW_FILE" "../../$NEW_NAME"
+        
+        # Copy config
+        CONFIG_NAME="ASUS_RT-N11P_build.config"
+        cp rt-n11p-fix.config "../../$CONFIG_NAME"
+        
+        echo "RTN11P_FW_FILE=$NEW_NAME" >> $GITHUB_ENV
+        echo "RTN11P_CONFIG=$CONFIG_NAME" >> $GITHUB_ENV
+        
+        echo "RT-N11P build completed: $NEW_NAME"
+
+    - name: Build RT-N11PB1
+      id: build_rtn11pb1
+      run: |
+        echo "=== Building RT-N11PB1 ==="
+        
+        # Check config file
+        if [[ ! -f rt-n11pb1-fix.config ]]; then
+          echo "ERROR: rt-n11pb1-fix.config not found!"
+          exit 1
+        fi
+        
+        # Clean previous build
+        cd padavan-ng/trunk
+        echo "Cleaning previous build..."
+        ./clear_tree.sh
+        
+        # Copy config
+        cd ../..
+        cp rt-n11pb1-fix.config padavan-ng/trunk/.config
+        
+        # Build
+        cd padavan-ng/trunk
+        echo "Running build_firmware.sh..."
+        ./build_firmware.sh
+        
+        # Find firmware file
+        FW_FILE=$(find images -name "*.trx" -o -name "*.bin" | head -1)
+        if [[ -z "$FW_FILE" ]]; then
+          echo "ERROR: No firmware file found!"
+          ls -la images/ || echo "images directory not found"
+          exit 1
+        fi
+        
+        echo "Firmware found: $FW_FILE"
+        
+        # Copy and rename
+        TIMESTAMP=$(date '+%Y.%m.%d_%H.%M.%S')
+        NEW_NAME="ASUS_RT-N11PB1_Padavan_${FW_VERSION}-${FW_COMMIT}_${TIMESTAMP}.trx"
+        cp "$FW_FILE" "../../$NEW_NAME"
+        
+        # Copy config
+        CONFIG_NAME="ASUS_RT-N11PB1_build.config"
+        cp rt-n11pb1-fix.config "../../$CONFIG_NAME"
+        
+        echo "RTN11PB1_FW_FILE=$NEW_NAME" >> $GITHUB_ENV
+        echo "RTN11PB1_CONFIG=$CONFIG_NAME" >> $GITHUB_ENV
+        
+        echo "RT-N11PB1 build completed: $NEW_NAME"
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: Padavan_Firmwares_$(date '+%Y.%m.%d_%H.%M.%S')
+        retention-days: 90
+        path: |
+          ${{ env.RTN11P_FW_FILE }}
+          ${{ env.RTN11P_CONFIG }}
+          ${{ env.RTN11PB1_FW_FILE }}
+          ${{ env.RTN11PB1_CONFIG }}
+
+    - name: Create Release (on tag)
+      if: startsWith(github.ref, 'refs/tags/')
+      uses: softprops/action-gh-release@v1
+      with:
+        name: Padavan ${{ env.FW_VERSION }}-${{ env.FW_COMMIT }}
+        body: |
+          ## Padavan Firmware Build
+          
+          **Version:** ${{ env.FW_VERSION }}
+          **Commit:** ${{ env.FW_COMMIT }}
+          **Build date:** $(date '+%Y-%m-%d %H:%M:%S')
+          
+          ### Supported devices:
+          - ASUS RT-N11P
+          - ASUS RT-N11PB1
+          
+          ### Features:
+          - Russian & Ukrainian UI languages
+          - YouTube bypass (NFQWS)
+          - Size optimization
+          - OpenSSH, OpenVPN, WireGuard support
+          
+          ### Files included:
+          - ${{ env.RTN11P_FW_FILE }}
+          - ${{ env.RTN11P_CONFIG }}
+          - ${{ env.RTN11PB1_FW_FILE }}
+          - ${{ env.RTN11PB1_CONFIG }}
+        draft: false
+        prerelease: false
+        files: |
+          ${{ env.RTN11P_FW_FILE }}
+          ${{ env.RTN11P_CONFIG }}
+          ${{ env.RTN11PB1_FW_FILE }}
+          ${{ env.RTN11PB1_CONFIG }}
