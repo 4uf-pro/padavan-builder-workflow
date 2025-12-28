@@ -1,0 +1,40 @@
+#!/bin/bash
+
+# Padavan-NG repository configuration
+# Repository URL for Padavan-NG firmware source code
+PADAVAN_REPO="https://gitlab.com/hadzhioglu/padavan-ng.git"
+
+# Git branch to use for firmware sources
+PADAVAN_BRANCH="master"
+
+# Git commit/tag to checkout (use HEAD for latest commit)
+PADAVAN_COMMIT="HEAD"
+
+# Toolchain download URL
+# This contains cross-compilation tools for building firmware
+PADAVAN_TOOLCHAIN_URL="https://gitlab.com/api/v4/projects/hadzhioglu%2Fpadavan-ng/packages/generic/toolchain/latest/toolchain.tzst"
+
+# Themes repository configuration
+# Repository URL for Padavan web interface themes
+PADAVAN_THEMES_REPO="https://gitlab.com/hadzhioglu/padavan-themes.git"
+
+# Alternative lightweight themes repository (commented out by default)
+#PADAVAN_THEMES_REPO="https://gitlab.com/hadzhioglu/padavan-themes-lite.git"
+
+# Git branch to use for themes
+PADAVAN_THEMES_BRANCH="main"
+
+# Theme selection array
+# Uncomment the themes you want to include in the firmware build
+# Each theme increases firmware size by approximately 100-200KB
+PADAVAN_THEMES=(
+  # blue        - Blue color theme
+  # blue2       - Alternative blue theme
+  # grey        - Gray color theme
+  # grey2       - Alternative gray theme
+  # white       - White/light theme
+  # yellow      - Yellow/gold theme
+)
+
+# Note: To enable a theme, remove the '#' character from the beginning of the line
+# Example: PADAVAN_THEMES=(blue grey white)
