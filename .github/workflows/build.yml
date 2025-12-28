@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       clean_build:
-        description: 'Выполнить чистую сборку (удалить кэш)'
+        description: 'Perform clean build (remove cache)'
         required: false
         default: false
         type: boolean
@@ -27,86 +27,86 @@ jobs:
       fail-fast: false
       matrix:
         device:
-          - name: "ASUS RT-N11P (Ревизия A1)"
+          - name: "ASUS RT-N11P (Revision A1)"
             config_file: "rt-n11p-fix.config"
             board: "RT-N11P"
             revision: "A1"
           
-          - name: "ASUS RT-N11P B1 (Ревизия B1)"
+          - name: "ASUS RT-N11P B1 (Revision B1)"
             config_file: "rt-n11pb1-fix.config"
             board: "RT-N11PB1"
             revision: "B1"
     
     steps:
       # ========================
-      # 1. ПОДГОТОВИТЕЛЬНЫЕ ДЕЙСТВИЯ
+      # 1. PREPARATION
       # ========================
-      - name: Клонирование репозитория
+      - name: Clone repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
           path: 'source'
       
-      - name: Проверка конфигурационных файлов
+      - name: Validate configuration files
         id: validate
         run: |
           cd source
           
-          ОБЯЗАТЕЛЬНЫЕ_ФАЙЛЫ=("variables" "${{ matrix.config_file }}")
-          for файл in "${ОБЯЗАТЕЛЬНЫЕ_ФАЙЛЫ[@]}"; do
-            if [[ ! -f "$файл" ]]; then
-              echo "ОШИБКА: Отсутствует обязательный файл: $файл"
+          REQUIRED_FILES=("variables" "${{ matrix.config_file }}")
+          for file in "${REQUIRED_FILES[@]}"; do
+            if [[ ! -f "$file" ]]; then
+              echo "ERROR: Missing required file: $file"
               exit 1
             fi
-            echo "✓ Найден: $файл"
+            echo "✓ Found: $file"
           done
           
           echo "validation=passed" >> $GITHUB_OUTPUT
       
       # ========================
-      # 2. ЗАГРУЗКА КОНФИГУРАЦИИ
+      # 2. LOAD CONFIGURATION
       # ========================
-      - name: Загрузка параметров сборки
+      - name: Load build parameters
         id: config
         run: |
           cd source
           
-          # Безопасная загрузка variables
+          # Safe load variables
           set -o allexport
           source variables
           set +o allexport
           
-          # Загрузка конфигурации устройства
-          КОНФИГ_ПЕРЕМЕННЫЕ=()
-          while IFS='=' read -r ключ значение || [[ -n "$ключ" ]]; do
-            # Пропускаем комментарии и пустые строки
-            [[ -z "$ключ" || "$ключ" =~ ^[[:space:]]*# ]] && continue
+          # Load device configuration
+          CONFIG_VARS=()
+          while IFS='=' read -r key value || [[ -n "$key" ]]; do
+            # Skip comments and empty lines
+            [[ -z "$key" || "$key" =~ ^[[:space:]]*# ]] && continue
             
-            # Очистка значения от кавычек и пробелов
-            значение="${значение%%#*}"  # Удаление комментариев после значения
-            значение="${значение%"${значение##*[![:space:]]}"}"  # Обрезка пробелов справа
-            значение="${значение#"${значение%%[![:space:]]*}"}"  # Обрезка пробелов слева
-            значение="${значение#\"}"
-            значение="${значение%\"}"
-            значение="${значение#\'}"
-            значение="${значение%\'}"
+            # Clean value from quotes and spaces
+            value="${value%%#*}"  # Remove comments after value
+            value="${value%"${value##*[![:space:]]}"}"  # Trim trailing spaces
+            value="${value#"${value%%[![:space:]]*}"}"  # Trim leading spaces
+            value="${value#\"}"
+            value="${value%\"}"
+            value="${value#\'}"
+            value="${value%\'}"
             
-            export "$ключ"="$значение"
-            КОНФИГ_ПЕРЕМЕННЫЕ+=("$ключ")
+            export "$key"="$value"
+            CONFIG_VARS+=("$key")
           done < "${{ matrix.config_file }}"
           
-          # Проверка обязательных переменных
-          ОБЯЗАТЕЛЬНЫЕ_ПЕРЕМЕННЫЕ=("PADAVAN_REPO" "PADAVAN_BRANCH" "PADAVAN_TOOLCHAIN_URL" 
-                                  "CONFIG_VENDOR" "CONFIG_FIRMWARE_PRODUCT_ID")
+          # Validate required variables
+          REQUIRED_VARS=("PADAVAN_REPO" "PADAVAN_BRANCH" "PADAVAN_TOOLCHAIN_URL" 
+                        "CONFIG_VENDOR" "CONFIG_FIRMWARE_PRODUCT_ID")
           
-          for переменная in "${ОБЯЗАТЕЛЬНЫЕ_ПЕРЕМЕННЫЕ[@]}"; do
-            if [[ -z "${!переменная}" ]]; then
-              echo "ОШИБКА: Не задана обязательная переменная: $переменная"
+          for var in "${REQUIRED_VARS[@]}"; do
+            if [[ -z "${!var}" ]]; then
+              echo "ERROR: Required variable not set: $var"
               exit 1
             fi
           done
           
-          # Экспорт в окружение GitHub
+          # Export to GitHub environment
           {
             echo "DEVICE_NAME=${{ matrix.name }}"
             echo "CONFIG_FILE=${{ matrix.config_file }}"
@@ -119,160 +119,160 @@ jobs:
             echo "CONFIG_FIRMWARE_PRODUCT_ID=$CONFIG_FIRMWARE_PRODUCT_ID"
           } >> $GITHUB_ENV
           
-          echo "Конфигурация успешно загружена"
-          echo "Устройство: $CONFIG_FIRMWARE_PRODUCT_ID (Ревизия: ${{ matrix.revision }})"
+          echo "Configuration loaded successfully"
+          echo "Device: $CONFIG_FIRMWARE_PRODUCT_ID (Revision: ${{ matrix.revision }})"
       
       # ========================
-      # 3. ПОДГОТОВКА СРЕДЫ СБОРКИ
+      # 3. SETUP BUILD ENVIRONMENT
       # ========================
-      - name: Подготовка среды сборки
+      - name: Setup build environment
         run: |
           echo "========================================"
-          echo "Подготовка среды сборки"
+          echo "Setting up build environment"
           echo "========================================"
           
-          echo "Клонирование репозитория Padavan-NG..."
+          echo "Cloning Padavan-NG repository..."
           git clone -b "$PADAVAN_BRANCH" --depth 1 "$PADAVAN_REPO" padavan-ng
           
-          echo "Загрузка тулчейна..."
+          echo "Downloading toolchain..."
           cd padavan-ng
           wget -q --show-progress -O toolchain.tzst "$PADAVAN_TOOLCHAIN_URL"
           tar --zstd -xf toolchain.tzst
           rm -f toolchain.tzst
           cd ..
           
-          echo "Среда сборки готова"
+          echo "Build environment ready"
       
       # ========================
-      # 4. ОПТИМИЗАЦИЯ (НЕОБЯЗАТЕЛЬНО)
+      # 4. OPTIMIZATION (OPTIONAL)
       # ========================
-      - name: Выполнение скрипта оптимизации
+      - name: Run optimization script
         continue-on-error: true
         run: |
           if [[ -f "source/pre-build.sh" ]]; then
-            echo "Выполнение предсборочной оптимизации..."
+            echo "Running pre-build optimization..."
             chmod +x source/pre-build.sh
             cd source
             ./pre-build.sh
-            echo "Оптимизация завершена"
+            echo "Optimization completed"
           else
-            echo "Скрипт оптимизации не найден, пропускаем..."
+            echo "Optimization script not found, skipping..."
           fi
       
       # ========================
-      # 5. СБОРКА ПРОШИВКИ
+      # 5. BUILD FIRMWARE
       # ========================
-      - name: Сборка прошивки
+      - name: Build firmware
         id: build
         run: |
           echo "========================================"
-          echo "Сборка прошивки для ${{ matrix.name }}"
+          echo "Building firmware for ${{ matrix.name }}"
           echo "========================================"
           
-          # Копирование конфигурации
+          # Copy configuration
           cp "source/${{ matrix.config_file }}" padavan-ng/trunk/.config
           
-          # Переход в директорию сборки
+          # Move to build directory
           cd padavan-ng/trunk
           
-          # Логирование начала сборки
-          НАЧАЛО_СБОРКИ=$(date +%s)
-          echo "Сборка начата: $(date)"
+          # Log build start
+          BUILD_START=$(date +%s)
+          echo "Build started: $(date)"
           
-          # Запуск сборки
+          # Start build
           if ./build_firmware.sh; then
-            СТАТУС_СБОРКИ="success"
+            BUILD_STATUS="success"
           else
-            СТАТУС_СБОРКИ="failed"
+            BUILD_STATUS="failed"
           fi
           
-          # Логирование завершения
-          КОНЕЦ_СБОРКИ=$(date +%s)
-          ДЛИТЕЛЬНОСТЬ_СБОРКИ=$((КОНЕЦ_СБОРКИ - НАЧАЛО_СБОРКИ))
+          # Log build end
+          BUILD_END=$(date +%s)
+          BUILD_DURATION=$((BUILD_END - BUILD_START))
           
-          # Поиск собранной прошивки
-          ФАЙЛ_ПРОШИВКИ=$(find images -name "*.trx" -o -name "*.bin" | head -1)
+          # Find firmware file
+          FW_FILE=$(find images -name "*.trx" -o -name "*.bin" | head -1)
           
-          # Экспорт результатов
+          # Export results
           {
-            echo "BUILD_STATUS=$СТАТУС_СБОРКИ"
-            echo "BUILD_DURATION=$ДЛИТЕЛЬНОСТЬ_СБОРКИ"
-            echo "FW_FILE=$ФАЙЛ_ПРОШИВКИ"
+            echo "BUILD_STATUS=$BUILD_STATUS"
+            echo "BUILD_DURATION=$BUILD_DURATION"
+            echo "FW_FILE=$FW_FILE"
             echo "BUILD_TIMESTAMP=$(date '+%Y.%m.%d_%H.%M.%S')"
           } >> $GITHUB_ENV
           
-          # Проверка результата
-          if [[ "$СТАТУС_СБОРКИ" == "success" && -n "$ФАЙЛ_ПРОШИВКИ" ]]; then
-            РАЗМЕР_ПРОШИВКИ=$(stat -c%s "$ФАЙЛ_ПРОШИВКИ" 2>/dev/null || echo "0")
-            echo "Сборка успешно завершена за ${ДЛИТЕЛЬНОСТЬ_СБОРКИ}с"
-            echo "Прошивка: $(basename "$ФАЙЛ_ПРОШИВКИ")"
-            echo "Размер: $((РАЗМЕР_ПРОШИВКИ / 1024)) КБ"
+          # Check result
+          if [[ "$BUILD_STATUS" == "success" && -n "$FW_FILE" ]]; then
+            FIRMWARE_SIZE=$(stat -c%s "$FW_FILE" 2>/dev/null || echo "0")
+            echo "Build completed successfully in ${BUILD_DURATION}s"
+            echo "Firmware: $(basename "$FW_FILE")"
+            echo "Size: $((FIRMWARE_SIZE / 1024)) KB"
           else
-            echo "ОШИБКА: Сборка не удалась или прошивка не найдена"
+            echo "ERROR: Build failed or firmware not found"
             exit 1
           fi
       
       # ========================
-      # 6. ПОДГОТОВКА АРТЕФАКТОВ
+      # 6. PREPARE ARTIFACTS
       # ========================
-      - name: Подготовка артефактов
+      - name: Prepare artifacts
         if: steps.build.outcome == 'success'
         run: |
-          echo "Подготовка артефактов..."
+          echo "Preparing artifacts..."
           
-          # Получение метаданных
+          # Get metadata
           cd padavan-ng
-          ВЕРСИЯ_PADAVAN=$(grep '^RT_SOFT_VER' trunk/configs/templates/version.mk | cut -d '"' -f2)
-          ХЭШ_КОММИТА=$(git rev-parse --short HEAD)
+          PADAVAN_VERSION=$(grep '^RT_SOFT_VER' trunk/configs/templates/version.mk | cut -d '"' -f2)
+          COMMIT_HASH=$(git rev-parse --short HEAD)
           cd ..
           
-          # Формирование имени пакета
-          ИМЯ_ПАКЕТА="${CONFIG_VENDOR}_${CONFIG_FIRMWARE_PRODUCT_ID}_Padavan_${ВЕРСИЯ_PADAVAN}-${ХЭШ_КОММИТА}_${BUILD_TIMESTAMP}"
+          # Create package name
+          PACKAGE_NAME="${CONFIG_VENDOR}_${CONFIG_FIRMWARE_PRODUCT_ID}_Padavan_${PADAVAN_VERSION}-${COMMIT_HASH}_${BUILD_TIMESTAMP}"
           
-          # Создание README
+          # Create README
           cat > README.md << EOF
-# Прошивка Padavan
+# Padavan Firmware
 ## ${CONFIG_FIRMWARE_PRODUCT_ID} (${REVISION})
 
-### Информация о сборке
-- **Модель:** ${CONFIG_FIRMWARE_PRODUCT_ID}
-- **Ревизия:** ${REVISION}
-- **Производитель:** ${CONFIG_VENDOR}
-- **Версия прошивки:** ${ВЕРСИЯ_PADAVAN}
-- **Дата сборки:** ${BUILD_TIMESTAMP}
-- **Длительность сборки:** ${BUILD_DURATION} секунд
-- **Коммит Git:** ${ХЭШ_КОММИТА}
+### Build Information
+- **Model:** ${CONFIG_FIRMWARE_PRODUCT_ID}
+- **Revision:** ${REVISION}
+- **Vendor:** ${CONFIG_VENDOR}
+- **Firmware Version:** ${PADAVAN_VERSION}
+- **Build Date:** ${BUILD_TIMESTAMP}
+- **Build Duration:** ${BUILD_DURATION} seconds
+- **Git Commit:** ${COMMIT_HASH}
 
-### Установка
-1. Распакуйте архив
-2. Загрузите файл .trx через веб-интерфейс роутера
-3. Стандартные учётные данные: admin/admin
+### Installation
+1. Extract the archive
+2. Upload .trx file via router web interface
+3. Default credentials: admin/admin
 
-### Примечания
-- Всегда создавайте резервную копию текущей конфигурации
-- Выполните сброс к заводским настройкам после прошивки
-- Только для ревизии ${REVISION}
+### Notes
+- Always backup current configuration
+- Perform factory reset after flashing
+- For revision ${REVISION} only
 EOF
           
-          # Копирование прошивки
-          cp "$FW_FILE" "${ИМЯ_ПАКЕТА}.trx"
+          # Copy firmware
+          cp "$FW_FILE" "${PACKAGE_NAME}.trx"
           
-          # Создание архива
-          zip "${ИМЯ_ПАКЕТА}.zip" "${ИМЯ_ПАКЕТА}.trx" README.md
+          # Create archive
+          zip "${PACKAGE_NAME}.zip" "${PACKAGE_NAME}.trx" README.md
           
-          # Экспорт имён файлов
+          # Export file names
           {
-            echo "PACKAGE_NAME=${ИМЯ_ПАКЕТА}.zip"
-            echo "FIRMWARE_FILE=${ИМЯ_ПАКЕТА}.trx"
-            echo "FIRMWARE_VERSION=${ВЕРСИЯ_PADAVAN}"
+            echo "PACKAGE_NAME=${PACKAGE_NAME}.zip"
+            echo "FIRMWARE_FILE=${PACKAGE_NAME}.trx"
+            echo "FIRMWARE_VERSION=${PADAVAN_VERSION}"
           } >> $GITHUB_ENV
           
-          echo "Артефакты подготовлены: ${ИМЯ_ПАКЕТА}.zip"
+          echo "Artifacts prepared: ${PACKAGE_NAME}.zip"
       
       # ========================
-      # 7. ЗАГРУЗКА АРТЕФАКТОВ
+      # 7. UPLOAD ARTIFACTS
       # ========================
-      - name: Загрузка артефактов
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.PACKAGE_NAME }}
@@ -283,37 +283,37 @@ EOF
           compression-level: 9
       
       # ========================
-      # 8. ОЧИСТКА
+      # 8. CLEANUP
       # ========================
-      - name: Очистка временных файлов
+      - name: Cleanup temporary files
         if: always()
         run: |
-          echo "Очистка временных файлов..."
+          echo "Cleaning temporary files..."
           rm -rf padavan-ng 2>/dev/null || true
           rm -f *.trx *.zip README.md 2>/dev/null || true
       
       # ========================
-      # 9. ИТОГИ СБОРКИ
+      # 9. BUILD SUMMARY
       # ========================
-      - name: Итоги сборки
+      - name: Build summary
         if: always()
         run: |
           echo "========================================"
-          echo "ИТОГИ СБОРКИ"
+          echo "BUILD SUMMARY"
           echo "========================================"
           
           if [[ "${{ job.status }}" == "success" ]]; then
-            echo "УСПЕХ: Прошивка успешно собрана"
+            echo "SUCCESS: Firmware built successfully"
             echo ""
-            echo "Устройство: ${{ matrix.name }}"
-            echo "Пакет: ${{ env.PACKAGE_NAME }}"
-            echo "Версия: ${{ env.FIRMWARE_VERSION }}"
-            echo "Время: ${{ env.BUILD_DURATION }} секунд"
+            echo "Device: ${{ matrix.name }}"
+            echo "Package: ${{ env.PACKAGE_NAME }}"
+            echo "Version: ${{ env.FIRMWARE_VERSION }}"
+            echo "Time: ${{ env.BUILD_DURATION }} seconds"
             echo ""
-            echo "Прошивка готова к использованию."
+            echo "Firmware is ready for use."
           else
-            echo "НЕУДАЧА: Сборка не удалась"
-            echo "Устройство: ${{ matrix.name }}"
-            echo "Статус: ${{ job.status }}"
+            echo "FAILURE: Build failed"
+            echo "Device: ${{ matrix.name }}"
+            echo "Status: ${{ job.status }}"
           fi
           echo "========================================"
