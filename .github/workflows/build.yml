@@ -1,0 +1,221 @@
+name: Build Padavan Firmware
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - '*'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: registry.gitlab.com/hadzhioglu/padavan-ng
+    defaults: { run: { shell: bash } }
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Get variables
+      run: |
+        sed -i 's|\r$||g' variables
+        . variables
+        PADAVAN_THEMES="${PADAVAN_THEMES[*]}"
+        for v in "${!PADAVAN_@}"; do
+          echo "$v=${!v}" >> $GITHUB_ENV
+        done
+
+    - name: Download sources and toolchain
+      run: |
+        git config --global --add safe.directory '*'
+        git clone -b "$PADAVAN_BRANCH" "$PADAVAN_REPO"
+        git -C padavan-ng checkout "$PADAVAN_COMMIT"
+        wget -qO- "$PADAVAN_TOOLCHAIN_URL" | tar -C padavan-ng --zstd -xf -
+
+    - name: Get firmware version info
+      run: |
+        cd padavan-ng/trunk
+        # Get firmware version
+        if [[ -f version ]]; then
+          FW_VERSION=$(grep 'FIRMWARE_BUILDS_REV=' version | cut -d'=' -f2)
+        else
+          FW_VERSION=$(grep 'CONFIG_FIRMWARE_VERSION=' .config | cut -d'=' -f2 | tr -d '"')
+        fi
+        # Get short commit hash (9 characters)
+        FW_COMMIT=$(git rev-parse --short=9 HEAD)
+        echo "FW_VERSION=${FW_VERSION}" >> $GITHUB_ENV
+        echo "FW_COMMIT=${FW_COMMIT}" >> $GITHUB_ENV
+
+    - name: Install themes (if any)
+      run: |
+        if [[ -n $PADAVAN_THEMES ]]; then
+          echo "Installing themes from $PADAVAN_THEMES_REPO"
+          git clone --depth 1 -b "$PADAVAN_THEMES_BRANCH" "$PADAVAN_THEMES_REPO" themes
+          cp -r themes/common-theme themes/jquery.js padavan-ng/trunk/user/www/n56u_ribbon_fixed
+
+          for theme in $PADAVAN_THEMES; do
+            echo "Installing $theme theme"
+            cp -r "themes/$theme-theme" padavan-ng/trunk/user/www/n56u_ribbon_fixed
+          done
+        else
+          echo "No themes selected"
+        fi
+
+    - name: Run custom pre-build script
+      run: '[[ -f pre-build.sh ]] && . pre-build.sh || :'
+
+    - name: Build RT-N11P
+      run: |
+        # Copy config for RT-N11P
+        echo "Building RT-N11P firmware..."
+        cp rt-n11p-fix.config padavan-ng/trunk/.config
+        
+        # Start build
+        cd padavan-ng/trunk
+        ./clear_tree.sh
+        ./build_firmware.sh
+        
+        # Find firmware file (looking for .trx extension)
+        FW_FILE_NAME="$(find images -type f -name "*.trx" \
+                        -printf "%T@\t%f\n" | sort -V | tail -1 | cut -f2)"
+        if [[ -z $FW_FILE_NAME ]]; then
+          # Fallback: look for any firmware file
+          FW_FILE_NAME="$(find images -type f \( -name "*.trx" -o -name "*.bin" \) \
+                          -printf "%T@\t%f\n" | sort -V | tail -1 | cut -f2)"
+        fi
+        [[ -n $FW_FILE_NAME ]] || { echo "Firmware file not found"; exit 1; }
+        
+        # Create new filename with .trx extension
+        TIMESTAMP=$(date '+%Y.%m.%d_%H.%M.%S')
+        NEW_FW_NAME="ASUS_RT-N11P_Padavan_${FW_VERSION}-${FW_COMMIT}_${TIMESTAMP}.trx"
+        cp "images/$FW_FILE_NAME" "../../$NEW_FW_NAME"
+        echo "RTN11P_FW_FILE=$NEW_FW_NAME" >> $GITHUB_ENV
+        
+        # Copy config file with new name
+        CONFIG_NAME="ASUS_RT-N11P_build.config"
+        cp rt-n11p-fix.config "../../$CONFIG_NAME"
+        echo "RTN11P_CONFIG=$CONFIG_NAME" >> $GITHUB_ENV
+        
+        # Check size
+        cd ../..
+        source rt-n11p-fix.config
+        partitions="padavan-ng/trunk/configs/boards/$CONFIG_VENDOR/$CONFIG_FIRMWARE_PRODUCT_ID/partitions.config"
+        if [[ -f "$partitions" ]]; then
+          max_fw_size="$(awk '/Firmware/ { getline; getline; sub(",", ""); print strtonum($2); }' "$partitions")"
+          fw_size="$(stat -c %s "$NEW_FW_NAME")"
+          
+          if ((fw_size > max_fw_size)); then
+            fw_size_fmtd="$(numfmt --grouping "$fw_size") bytes"
+            max_fw_size_fmtd="$(numfmt --grouping "$max_fw_size") bytes"
+            echo "ERROR: RT-N11P firmware size ($fw_size_fmtd) exceeds max size ($max_fw_size_fmtd)"
+            exit 1
+          fi
+          echo "RT-N11P firmware size OK: $(numfmt --grouping "$fw_size") bytes"
+        fi
+
+    - name: Build RT-N11PB1
+      run: |
+        # Clean and prepare for new build
+        echo "Building RT-N11PB1 firmware..."
+        cd padavan-ng/trunk
+        ./clear_tree.sh
+        
+        # Copy config for RT-N11PB1
+        cd ../..
+        cp rt-n11pb1-fix.config padavan-ng/trunk/.config
+        
+        # Start build
+        cd padavan-ng/trunk
+        ./build_firmware.sh
+        
+        # Find firmware file (looking for .trx extension)
+        FW_FILE_NAME="$(find images -type f -name "*.trx" \
+                        -printf "%T@\t%f\n" | sort -V | tail -1 | cut -f2)"
+        if [[ -z $FW_FILE_NAME ]]; then
+          # Fallback: look for any firmware file
+          FW_FILE_NAME="$(find images -type f \( -name "*.trx" -o -name "*.bin" \) \
+                          -printf "%T@\t%f\n" | sort -V | tail -1 | cut -f2)"
+        fi
+        [[ -n $FW_FILE_NAME ]] || { echo "Firmware file not found"; exit 1; }
+        
+        # Create new filename with .trx extension
+        TIMESTAMP=$(date '+%Y.%m.%d_%H.%M.%S')
+        NEW_FW_NAME="ASUS_RT-N11PB1_Padavan_${FW_VERSION}-${FW_COMMIT}_${TIMESTAMP}.trx"
+        cp "images/$FW_FILE_NAME" "../../$NEW_FW_NAME"
+        echo "RTN11PB1_FW_FILE=$NEW_FW_NAME" >> $GITHUB_ENV
+        
+        # Copy config file with new name
+        CONFIG_NAME="ASUS_RT-N11PB1_build.config"
+        cp rt-n11pb1-fix.config "../../$CONFIG_NAME"
+        echo "RTN11PB1_CONFIG=$CONFIG_NAME" >> $GITHUB_ENV
+        
+        # Check size
+        cd ../..
+        source rt-n11pb1-fix.config
+        partitions="padavan-ng/trunk/configs/boards/$CONFIG_VENDOR/$CONFIG_FIRMWARE_PRODUCT_ID/partitions.config"
+        if [[ -f "$partitions" ]]; then
+          max_fw_size="$(awk '/Firmware/ { getline; getline; sub(",", ""); print strtonum($2); }' "$partitions")"
+          fw_size="$(stat -c %s "$NEW_FW_NAME")"
+          
+          if ((fw_size > max_fw_size)); then
+            fw_size_fmtd="$(numfmt --grouping "$fw_size") bytes"
+            max_fw_size_fmtd="$(numfmt --grouping "$max_fw_size") bytes"
+            echo "ERROR: RT-N11PB1 firmware size ($fw_size_fmtd) exceeds max size ($max_fw_size_fmtd)"
+            exit 1
+          fi
+          echo "RT-N11PB1 firmware size OK: $(numfmt --grouping "$fw_size") bytes"
+        fi
+
+    - name: Run custom post-build script
+      run: '[[ -f post-build.sh ]] && . post-build.sh || :'
+
+    - name: Create GitHub Release (on tag)
+      if: startsWith(github.ref, 'refs/tags/')
+      uses: softprops/action-gh-release@v1
+      with:
+        name: Padavan ${{ env.FW_VERSION }}-${{ env.FW_COMMIT }}
+        body: |
+          ## Padavan Firmware Build
+          
+          **Build info:**
+          - Version: ${{ env.FW_VERSION }}
+          - Commit: ${{ env.FW_COMMIT }}
+          - Date: $(date '+%Y-%m-%d %H:%M:%S')
+          
+          **Supported devices:**
+          - ASUS RT-N11P
+          - ASUS RT-N11PB1
+          
+          **Features:**
+          - Russian & Ukrainian UI
+          - YouTube bypass (NFQWS)
+          - Size optimization
+          - OpenSSH, OpenVPN, WireGuard
+          
+          ### Downloads:
+          - [ASUS_RT-N11P_Padavan_${{ env.FW_VERSION }}-${{ env.FW_COMMIT }}_$(date '+%Y.%m.%d_%H.%M.%S').trx] - For RT-N11P
+          - [ASUS_RT-N11PB1_Padavan_${{ env.FW_VERSION }}-${{ env.FW_COMMIT }}_$(date '+%Y.%m.%d_%H.%M.%S').trx] - For RT-N11PB1
+          
+        draft: false
+        prerelease: false
+        files: |
+          ${{ env.RTN11P_FW_FILE }}
+          ${{ env.RTN11P_CONFIG }}
+          ${{ env.RTN11PB1_FW_FILE }}
+          ${{ env.RTN11PB1_CONFIG }}
+
+    - name: Upload RT-N11P artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: ASUS_RT-N11P_Padavan_${{ env.FW_VERSION }}-${{ env.FW_COMMIT }}_$(date '+%Y.%m.%d_%H.%M.%S')
+        retention-days: 90
+        path: |
+          ${{ env.RTN11P_FW_FILE }}
+          ${{ env.RTN11P_CONFIG }}
+
+    - name: Upload RT-N11PB1 artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: ASUS_RT-N11PB1_Padavan_${{ env.FW_VERSION }}-${{ env.FW_COMMIT }}_$(date '+%Y.%m.%d_%H.%M.%S')
+        retention-days: 90
+        path: |
+          ${{ env.RTN11PB1_FW_FILE }}
+          ${{ env.RTN11PB1_CONFIG }}
