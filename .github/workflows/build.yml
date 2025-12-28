@@ -1,0 +1,265 @@
+name: Build Padavan Firmware
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_device:
+        description: 'Select target device'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - RT-N11P
+          - RT-N11PB1
+  
+  push:
+    branches: [main]
+    tags: ['v*']
+
+env:
+  CACHE_KEY: padavan-${{ github.sha }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        device: ${{ fromJson(steps.setup-matrix.outputs.devices) }}
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Setup device matrix
+        id: setup-matrix
+        run: |
+          # Default devices
+          ALL_DEVICES='[
+            {"name":"ASUS RT-N11P (Revision A1)","config_file":"rt-n11p-fix.config","board":"RT-N11P","revision":"A1"},
+            {"name":"ASUS RT-N11P B1 (Revision B1)","config_file":"rt-n11pb1-fix.config","board":"RT-N11PB1","revision":"B1"}
+          ]'
+          
+          SELECTED="${{ github.event.inputs.target_device || 'all' }}"
+          
+          if [[ "$SELECTED" == "all" ]]; then
+            echo "devices=$ALL_DEVICES" >> $GITHUB_OUTPUT
+          else
+            # Filter by selected board
+            FILTERED=$(echo "$ALL_DEVICES" | jq --arg board "$SELECTED" '[.[] | select(.board == $board)]')
+            echo "devices=$FILTERED" >> $GITHUB_OUTPUT
+          fi
+          
+          echo "Selected: $SELECTED"
+      
+      - name: Setup build environment
+        run: |
+          echo "Installing dependencies..."
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            git \
+            wget \
+            tar \
+            zstd \
+            libncurses5-dev \
+            libncursesw5-dev \
+            gawk \
+            gettext \
+            libssl-dev \
+            python3 \
+            python3-pip \
+            rsync \
+            unzip \
+            xxd \
+            jq
+          
+          echo "Dependencies installed"
+      
+      - name: Cache toolchain
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cache
+            /tmp/toolchain
+          key: ${{ env.CACHE_KEY }}
+      
+      - name: Load build configuration
+        run: |
+          echo "Loading configuration for ${{ matrix.device.name }}"
+          
+          # Load variables
+          if [ -f "variables" ]; then
+            source variables
+            echo "Configuration loaded"
+          else
+            echo "ERROR: variables file not found"
+            exit 1
+          fi
+      
+      - name: Clone Padavan-NG repository
+        run: |
+          echo "Cloning Padavan-NG..."
+          if [ -d "padavan-ng" ]; then
+            rm -rf padavan-ng
+          fi
+          
+          git clone \
+            --branch "$PADAVAN_BRANCH" \
+            --depth 1 \
+            "$PADAVAN_REPO" \
+            padavan-ng
+      
+      - name: Setup toolchain
+        run: |
+          cd padavan-ng
+          echo "Downloading toolchain..."
+          wget -q --show-progress -O toolchain.tzst "$PADAVAN_TOOLCHAIN_URL"
+          tar --zstd -xf toolchain.tzst
+          rm -f toolchain.tzst
+          cd ..
+      
+      - name: Apply configuration
+        run: |
+          echo "Applying ${{ matrix.device.config_file }}"
+          cp "${{ matrix.device.config_file }}" padavan-ng/trunk/.config
+      
+      - name: Run pre-build optimizations
+        continue-on-error: true
+        run: |
+          if [ -f "pre-build.sh" ]; then
+            echo "Running pre-build optimizations..."
+            chmod +x pre-build.sh
+            ./pre-build.sh
+          fi
+      
+      - name: Build firmware
+        id: build-step
+        run: |
+          echo "Building ${{ matrix.device.name }}..."
+          
+          START_TIME=$(date +%s)
+          
+          cd padavan-ng/trunk
+          
+          if ./build_firmware.sh; then
+            echo "Build successful"
+            echo "BUILD_STATUS=success" >> $GITHUB_ENV
+          else
+            echo "Build failed"
+            echo "BUILD_STATUS=failed" >> $GITHUB_ENV
+            exit 1
+          fi
+          
+          END_TIME=$(date +%s)
+          DURATION=$((END_TIME - START_TIME))
+          echo "BUILD_DURATION=$DURATION" >> $GITHUB_ENV
+          echo "Build completed in $DURATION seconds"
+      
+      - name: Find firmware file
+        if: success()
+        id: find-firmware
+        run: |
+          cd padavan-ng/trunk
+          FW_FILE=$(find images -name "*.trx" | head -1)
+          
+          if [ -n "$FW_FILE" ]; then
+            FW_SIZE=$(stat -c%s "$FW_FILE")
+            FW_NAME=$(basename "$FW_FILE")
+            
+            echo "Firmware: $FW_NAME"
+            echo "Size: $((FW_SIZE / 1024)) KB"
+            
+            echo "FW_FILE=$FW_FILE" >> $GITHUB_ENV
+            echo "FW_NAME=$FW_NAME" >> $GITHUB_ENV
+            echo "FW_SIZE=$FW_SIZE" >> $GITHUB_ENV
+          else
+            echo "ERROR: No firmware file found"
+            exit 1
+          fi
+      
+      - name: Prepare artifacts
+        if: success()
+        run: |
+          cd padavan-ng
+          VERSION=$(grep '^RT_SOFT_VER' trunk/configs/templates/version.mk | cut -d '"' -f2)
+          COMMIT_HASH=$(git rev-parse --short HEAD)
+          cd ..
+          
+          ARTIFACT_NAME="${{ matrix.device.board }}_Padavan_${VERSION}_${COMMIT_HASH}"
+          
+          # Create README
+          cat > README.txt << EOF
+Padavan Firmware for ${{ matrix.device.name }}
+
+Build Information:
+- Device: ${{ matrix.device.name }}
+- Board: ${{ matrix.device.board }}
+- Revision: ${{ matrix.device.revision }}
+- Firmware Version: $VERSION
+- Build Date: $(date '+%Y-%m-%d %H:%M:%S')
+- Build Duration: ${{ env.BUILD_DURATION }} seconds
+- Git Commit: $COMMIT_HASH
+- File Size: $((env.FW_SIZE / 1024)) KB
+
+Installation:
+1. Download the firmware file
+2. Log into router web interface (usually 192.168.1.1)
+3. Go to Administration -> Firmware Upgrade
+4. Select the .trx file and upload
+5. Wait for router to reboot
+
+Default credentials:
+- Username: admin
+- Password: admin
+
+Notes:
+- Backup your configuration before flashing
+- Recommended to perform factory reset after flashing
+EOF
+          
+          # Copy firmware
+          cp "padavan-ng/trunk/$FW_FILE" "${ARTIFACT_NAME}.trx"
+          
+          # Create checksum
+          sha256sum "${ARTIFACT_NAME}.trx" > "${ARTIFACT_NAME}.sha256"
+          
+          # Create archive
+          zip "${ARTIFACT_NAME}.zip" \
+            "${ARTIFACT_NAME}.trx" \
+            "${ARTIFACT_NAME}.sha256" \
+            README.txt
+          
+          echo "ARTIFACT_NAME=${ARTIFACT_NAME}.zip" >> $GITHUB_ENV
+      
+      - name: Upload artifacts
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ARTIFACT_NAME }}
+          path: |
+            ${{ env.ARTIFACT_NAME }}
+            README.txt
+            *.sha256
+          retention-days: 30
+      
+      - name: Cleanup
+        if: always()
+        run: |
+          rm -rf padavan-ng 2>/dev/null || true
+          rm -f *.trx *.zip *.sha256 README.txt 2>/dev/null || true
+      
+      - name: Build summary
+        if: always()
+        run: |
+          echo "=== BUILD SUMMARY ==="
+          echo "Device: ${{ matrix.device.name }}"
+          
+          if [[ "${{ job.status }}" == "success" ]]; then
+            echo "Status: SUCCESS"
+            echo "Artifact: ${{ env.ARTIFACT_NAME }}"
+            echo "Duration: ${{ env.BUILD_DURATION }} seconds"
+          else
+            echo "Status: FAILED"
+          fi
