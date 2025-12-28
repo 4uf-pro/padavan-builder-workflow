@@ -1,0 +1,209 @@
+name: ASUS RT-N11P/RT-N11PB1 Padavan Firmware
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-rt-n11p:
+    runs-on: ubuntu-latest
+    container: registry.gitlab.com/hadzhioglu/padavan-ng
+    defaults: { run: { shell: bash } }
+    
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Load configuration for RT-N11P
+      run: |
+        echo "Сборка прошивки для RT-N11P"
+        
+        # Собираем итоговый конфиг из variables и конфига модели
+        cat variables rt-n11p-fix.config > build.config
+        
+        # Загружаем переменные в окружение
+        sed -i 's|\r$||g' variables build.config
+        . <(cat variables build.config)
+        PADAVAN_THEMES="${PADAVAN_THEMES[*]}"
+        for v in "${!PADAVAN_@}" "${!CONFIG_@}"; do
+          echo "$v=${!v}" >> $GITHUB_ENV
+        done
+        
+        # Сохраняем название модели
+        echo "MODEL=RT-N11P" >> $GITHUB_ENV
+
+    - name: Download sources and toolchain
+      run: |
+        git config --global --add safe.directory '*'
+        git clone -b "$PADAVAN_BRANCH" "$PADAVAN_REPO" padavan-ng
+        git -C padavan-ng checkout "$PADAVAN_COMMIT"
+        wget -qO- "$PADAVAN_TOOLCHAIN_URL" | tar -C padavan-ng --zstd -xf -
+
+    - name: Install themes
+      run: |
+        if [[ -n $PADAVAN_THEMES ]]; then
+          git clone --depth 1 -b "$PADAVAN_THEMES_BRANCH" "$PADAVAN_THEMES_REPO" themes
+          cp -r themes/common-theme themes/jquery.js padavan-ng/trunk/user/www/n56u_ribbon_fixed
+
+          for theme in $PADAVAN_THEMES; do
+            echo "Установка темы оформления: $theme"
+            cp -r "themes/$theme-theme" padavan-ng/trunk/user/www/n56u_ribbon_fixed
+          done
+        fi
+
+    - name: Run pre-build script
+      run: '[[ -f pre-build.sh ]] && . pre-build.sh || :'
+
+    - name: Build firmware
+      run: |
+        cp build.config padavan-ng/trunk/.config
+        cd padavan-ng/trunk
+        ./clear_tree.sh
+        ./build_firmware.sh
+
+        FW_FILE_NAME="$(find images -type f -regextype posix-extended -iregex ".*\.(trx|bin)$" \
+                        -printf "%T@\t%f\n" | sort -V | tail -1 | cut -f2)"
+        [[ -n $FW_FILE_NAME ]] || { echo "Ошибка: файл прошивки не найден"; exit 1; }
+        echo "FW_FILE_NAME=$FW_FILE_NAME" >> $GITHUB_ENV
+
+    - name: Run post-build script
+      run: '[[ -f post-build.sh ]] && . post-build.sh || :'
+
+    - name: Prepare release package
+      run: |
+        cp "padavan-ng/trunk/images/$FW_FILE_NAME" .
+        
+        # Формируем имя для архива релиза
+        FW_NAME_ONLY=$(basename "$FW_FILE_NAME")
+        BUILD_DATE=$(date '+%Y.%m.%d')
+        BUILD_TIME=$(date '+%H.%M.%S')
+        
+        # Получаем версию прошивки из имени файла
+        FW_VERSION="${FW_NAME_ONLY#*_}"  # Удаляем префикс модели (например "RT-N11P_")
+        FW_VERSION="${FW_VERSION%.trx}"  # Удаляем расширение ".trx"
+        
+        ARCHIVE_NAME="ASUS_RT-N11P_Padavan_${FW_VERSION}_${BUILD_DATE}_${BUILD_TIME}.zip"
+        echo "ARCHIVE_NAME=$ARCHIVE_NAME" >> $GITHUB_ENV
+        
+        # Создаём архив с прошивкой и конфигурацией
+        zip "$ARCHIVE_NAME" "$FW_NAME_ONLY" build.config
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ env.ARCHIVE_NAME }}
+        retention-days: 90
+        path: ${{ env.ARCHIVE_NAME }}
+
+    - name: Validate firmware size
+      run: |
+        partitions=padavan-ng/trunk/configs/boards/$CONFIG_VENDOR/$CONFIG_FIRMWARE_PRODUCT_ID/partitions.config
+        max_fw_size="$(awk '/Firmware/ { getline; getline; sub(",", ""); print strtonum($2); }' "$partitions")"
+        fw_size="$(stat -c %s "$FW_FILE_NAME")"
+
+        if ((fw_size > max_fw_size)); then
+          fw_size_fmtd="$(numfmt --grouping "$fw_size") байт"
+          max_fw_size_fmtd="$(numfmt --grouping "$max_fw_size") байт"
+          echo "Ошибка: размер прошивки ($fw_size_fmtd) превышает максимальный ($max_fw_size_fmtd)"
+          exit 1
+        fi
+
+  build-rt-n11pb1:
+    runs-on: ubuntu-latest
+    container: registry.gitlab.com/hadzhioglu/padavan-ng
+    defaults: { run: { shell: bash } }
+    
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Load configuration for RT-N11PB1
+      run: |
+        echo "Сборка прошивки для RT-N11PB1"
+        
+        # Собираем итоговый конфиг из variables и конфига модели
+        cat variables rt-n11pb1-fix.config > build.config
+        
+        # Загружаем переменные в окружение
+        sed -i 's|\r$||g' variables build.config
+        . <(cat variables build.config)
+        PADAVAN_THEMES="${PADAVAN_THEMES[*]}"
+        for v in "${!PADAVAN_@}" "${!CONFIG_@}"; do
+          echo "$v=${!v}" >> $GITHUB_ENV
+        done
+        
+        # Сохраняем название модели
+        echo "MODEL=RT-N11PB1" >> $GITHUB_ENV
+
+    - name: Download sources and toolchain
+      run: |
+        git config --global --add safe.directory '*'
+        git clone -b "$PADAVAN_BRANCH" "$PADAVAN_REPO" padavan-ng
+        git -C padavan-ng checkout "$PADAVAN_COMMIT"
+        wget -qO- "$PADAVAN_TOOLCHAIN_URL" | tar -C padavan-ng --zstd -xf -
+
+    - name: Install themes
+      run: |
+        if [[ -n $PADAVAN_THEMES ]]; then
+          git clone --depth 1 -b "$PADAVAN_THEMES_BRANCH" "$PADAVAN_THEMES_REPO" themes
+          cp -r themes/common-theme themes/jquery.js padavan-ng/trunk/user/www/n56u_ribbon_fixed
+
+          for theme in $PADAVAN_THEMES; do
+            echo "Установка темы оформления: $theme"
+            cp -r "themes/$theme-theme" padavan-ng/trunk/user/www/n56u_ribbon_fixed
+          done
+        fi
+
+    - name: Run pre-build script
+      run: '[[ -f pre-build.sh ]] && . pre-build.sh || :'
+
+    - name: Build firmware
+      run: |
+        cp build.config padavan-ng/trunk/.config
+        cd padavan-ng/trunk
+        ./clear_tree.sh
+        ./build_firmware.sh
+
+        FW_FILE_NAME="$(find images -type f -regextype posix-extended -iregex ".*\.(trx|bin)$" \
+                        -printf "%T@\t%f\n" | sort -V | tail -1 | cut -f2)"
+        [[ -n $FW_FILE_NAME ]] || { echo "Ошибка: файл прошивки не найден"; exit 1; }
+        echo "FW_FILE_NAME=$FW_FILE_NAME" >> $GITHUB_ENV
+
+    - name: Run post-build script
+      run: '[[ -f post-build.sh ]] && . post-build.sh || :'
+
+    - name: Prepare release package
+      run: |
+        cp "padavan-ng/trunk/images/$FW_FILE_NAME" .
+        
+        # Формируем имя для архива релиза
+        FW_NAME_ONLY=$(basename "$FW_FILE_NAME")
+        BUILD_DATE=$(date '+%Y.%m.%d')
+        BUILD_TIME=$(date '+%H.%M.%S')
+        
+        # Получаем версию прошивки из имени файла
+        FW_VERSION="${FW_NAME_ONLY#*_}"  # Удаляем префикс модели
+        FW_VERSION="${FW_VERSION%.trx}"  # Удаляем расширение
+        
+        ARCHIVE_NAME="ASUS_RT-N11PB1_Padavan_${FW_VERSION}_${BUILD_DATE}_${BUILD_TIME}.zip"
+        echo "ARCHIVE_NAME=$ARCHIVE_NAME" >> $GITHUB_ENV
+        
+        # Создаём архив с прошивкой и конфигурацией
+        zip "$ARCHIVE_NAME" "$FW_NAME_ONLY" build.config
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ env.ARCHIVE_NAME }}
+        retention-days: 90
+        path: ${{ env.ARCHIVE_NAME }}
+
+    - name: Validate firmware size
+      run: |
+        partitions=padavan-ng/trunk/configs/boards/$CONFIG_VENDOR/$CONFIG_FIRMWARE_PRODUCT_ID/partitions.config
+        max_fw_size="$(awk '/Firmware/ { getline; getline; sub(",", ""); print strtonum($2); }' "$partitions")"
+        fw_size="$(stat -c %s "$FW_FILE_NAME")"
+
+        if ((fw_size > max_fw_size)); then
+          fw_size_fmtd="$(numfmt --grouping "$fw_size") байт"
+          max_fw_size_fmtd="$(numfmt --grouping "$max_fw_size") байт"
+          echo "Ошибка: размер прошивки ($fw_size_fmtd) превышает максимальный ($max_fw_size_fmtd)"
+          exit 1
+        fi
