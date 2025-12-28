@@ -1,0 +1,25 @@
+#!/bin/bash
+# Configuration parameters for Padavan-NG build
+
+# Repository parameters
+PADAVAN_REPO="https://gitlab.com/hadzhioglu/padavan-ng.git"
+PADAVAN_BRANCH="master"
+PADAVAN_COMMIT="HEAD"
+PADAVAN_TOOLCHAIN_URL="https://gitlab.com/api/v4/projects/hadzhioglu%2Fpadavan-ng/packages/generic/toolchain/latest/toolchain.tzst"
+
+# Theme parameters (optional)
+PADAVAN_THEMES_REPO="https://gitlab.com/hadzhioglu/padavan-themes.git"
+# Alternative lightweight themes repository:
+# PADAVAN_THEMES_REPO="https://gitlab.com/hadzhioglu/padavan-themes-lite.git"
+PADAVAN_THEMES_BRANCH="main"
+
+# For space saving, built-in classic Padavan theme is used
+# Uncomment to enable additional themes:
+# PADAVAN_THEMES=(
+#   blue
+#   blue2
+#   grey
+#   grey2
+#   white
+#   yellow
+# )
