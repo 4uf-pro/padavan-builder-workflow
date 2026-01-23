@@ -1,0 +1,102 @@
+name: Build Padavan Firmware
+
+on:
+  workflow_dispatch:
+    inputs:
+      router_config:
+        description: 'Select router configuration file from configs/ directory'
+        required: true
+        default: 'asus-rt-n11p.config'
+        type: choice
+        options:
+          - mi-r3gv2-ra4v2-rb02.config
+          - asus-rt-n11p.config
+          - asus-rt-n11pb1.config
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    env:
+      BUILD_CONFIG: ${{ github.event.inputs.router_config }}
+      PADAVAN_REPO: https://github.com/shvchk/padavan-ng
+      PADAVAN_THEMES_REPO: https://github.com/shvchk/padavan-themes
+      PADAVAN_THEMES: ""
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      
+      - name: Load global variables
+        run: |
+          if [ -f "variables" ]; then
+            source variables
+          fi
+          echo "BUILD_CONFIG=$BUILD_CONFIG" >> $GITHUB_ENV
+      
+      - name: Extract device information
+        run: |
+          VENDOR=$(grep 'CONFIG_VENDOR=' configs/$BUILD_CONFIG | cut -d= -f2 | tr -d '"' | tr '[:upper:]' '[:lower:]' | tr -cd '[:alnum:]')
+          PRODUCT=$(grep 'CONFIG_FIRMWARE_PRODUCT_ID=' configs/$BUILD_CONFIG | cut -d= -f2 | tr -d '"' | tr '[:upper:]' '[:lower:]' | tr -s ' _' '-' | tr -cd '[:alnum:]-')
+          
+          if [[ -z "$VENDOR" ]]; then
+            VENDOR="unknown"
+          fi
+          if [[ -z "$PRODUCT" ]]; then
+            PRODUCT="${BUILD_CONFIG%.config}"
+          fi
+          
+          echo "VENDOR=$VENDOR" >> $GITHUB_ENV
+          echo "PRODUCT=$PRODUCT" >> $GITHUB_ENV
+          echo "Device identified: $VENDOR $PRODUCT"
+      
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libncurses5-dev git wget unzip
+      
+      - name: Prepare Padavan source
+        run: |
+          if [ ! -d "padavan-ng" ]; then
+            git clone --depth=1 $PADAVAN_REPO padavan-ng
+          fi
+          cd padavan-ng
+          git pull
+      
+      - name: Prepare build configuration
+        run: |
+          echo "Using configuration file: $BUILD_CONFIG"
+          cp configs/$BUILD_CONFIG padavan-ng/trunk/.config
+      
+      - name: Compile firmware
+        run: |
+          cd padavan-ng/trunk
+          make clean
+          make all
+      
+      - name: Create distribution package
+        run: |
+          FW_FILE=$(ls padavan-ng/trunk/images/*.trx | head -1)
+          FW_NAME=$(basename "$FW_FILE")
+          
+          mkdir -p firmware_package
+          cp "$FW_FILE" firmware_package/
+          cp "configs/$BUILD_CONFIG" firmware_package/build.config
+          
+          TIMESTAMP=$(date '+%Y%m%d-%H%M')
+          ARCHIVE_NAME="padavan-${VENDOR}-${PRODUCT}-${TIMESTAMP}.zip"
+          
+          cd firmware_package
+          zip -q "../$ARCHIVE_NAME" *
+          cd ..
+          
+          echo "ARCHIVE_NAME=$ARCHIVE_NAME" >> $GITHUB_ENV
+          echo "FW_NAME=$FW_NAME" >> $GITHUB_ENV
+      
+      - name: Upload firmware artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ARCHIVE_NAME }}
+          path: ${{ env.ARCHIVE_NAME }}
