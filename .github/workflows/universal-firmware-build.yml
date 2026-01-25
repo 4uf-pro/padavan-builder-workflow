@@ -11,6 +11,7 @@ on:
         options:
           - asus-rt-n11p.config
           - asus-rt-n11pb1.config
+          - r2100.config
 
 jobs:
   build:
@@ -88,4 +89,5 @@ jobs:
             max_fw_size="$(awk '/Firmware/ { getline; getline; sub(",", ""); print strtonum($2); }' "$partitions")"
             fw_size="$(stat -c %s "release/${{ env.FW_FILE_NAME }}")"
             ((fw_size > max_fw_size)) && exit 1 || exit 0
+
           fi
